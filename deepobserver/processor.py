@@ -1,4 +1,5 @@
 import argparse
+import base64
 import logging
 import os
 from typing import Optional
@@ -39,6 +40,11 @@ class VideoProcessor:
                 cv2.imshow('frame', frame)
                 last_process_time = current_time
                 # This is where you would call your LLM to process the frame
+                # Convert frame to base64 for LLM processing
+                _, buffer = cv2.imencode('.jpg', frame)
+                base64_frame: bytes = base64.b64encode(buffer).decode('utf-8')
+                response: str = self.llm_client.generate(prompt="Describe this image in detail", base64_image=base64_frame)
+                print(response)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
