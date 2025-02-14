@@ -17,10 +17,10 @@ class OpenAIClient(LLMClient):
     def generate(self, prompt: str, base64_image: bytes = None) -> str:
         system_message = {
             "role": "system",
-            "content": "You are a computer vision AI analyzing security camera footage. "
+            "content": "You are a computer vision AI analyzing a camera feed. "
                       "Provide detailed analysis with numerical scoring in these categories:\n"
-                      "- Activity Level (0-10): Amount of motion and activity in the scene\n"
-                      "- Object Density (0-10): Number and complexity of objects present\n"
+                      "- Object Detection & Classification (0-10): Key entities in the scene (people, vehicles, specific objects), attributes of detected objects (color, size, type, orientation), multiple object interactions (is a person near a car? is a vehicle obstructing another?)\n"
+                      "- Motion & Activity Recognition (0-10): Static vs moving objects (is the object parked? abandoned? or in motion?), speed & direction of movement (is a car or person approaching, stopping, or leaving?), action detection (what are people doing?), multi-step activities (analyze a sequence of actions vs a frame\n"
                       "- Environmental Change (0-10): Changes in lighting, setting, or background\n"
                       "- Human Presence (0-10): Number and involvement of people in the scene\n"
                       "If the scene is unchanged from previous observation, respond with exactly 'situation unchanged'."
