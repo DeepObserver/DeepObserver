@@ -2,9 +2,10 @@ import argparse
 import base64
 import logging
 import os
-from queue import Queue
+from queue import Queue, Full
 import time
 from typing import List, Optional, Tuple
+import threading
 
 import cv2
 import numpy as np
@@ -12,13 +13,14 @@ from dotenv import load_dotenv
 from ultralytics import YOLO
 
 from prompts import prompts
-from llm_client.base import LLMClient, OpenAIClient
+from llm_client.base import LLMClient, OpenAIClient, OllamaClient
 
 logger = logging.getLogger(__name__)
 load_dotenv()
 
 class VideoProcessor:
-    def __init__(self, rtsp_url: str, fps: float = 1.0) -> None:
+    def __init__(self, rtsp_url: str, fps: float = 60.0, yolo_model: str = 'yolov8s.pt', 
+                 llm_backend: str = 'openai') -> None:
         self.rtsp_url: str = rtsp_url
         self.cap: Optional[cv2.VideoCapture] = None
         self.fps: float = fps
@@ -86,6 +88,19 @@ class VideoProcessor:
             'duration_tracking': {},  # Track how long objects present
             'scene_context': None,  # Last scene context
         }
+
+        # Initialize LLM client based on backend choice // added backend ollama to blend with LLaVA
+        if llm_backend == 'openai':
+            self.llm_client = OpenAIClient(api_key=os.getenv("OPENAI_API_KEY"))
+        elif llm_backend == 'ollama':
+            self.llm_client = OllamaClient(model_name="llava")
+        else:
+            raise ValueError(f"Unsupported LLM backend: {llm_backend}")
+
+        # Add batch processing queue
+        self.batch_queue = Queue(maxsize=5)  # Store frame batches for LLaVA
+        self.batch_processing = False
+        self.batch_thread = None
 
     def analyze_movement_pattern(self, positions: List[Tuple]) -> dict:
         """Analyze movement pattern from position history"""
@@ -228,6 +243,21 @@ class VideoProcessor:
 
         return scene_analysis
 
+    def start_batch_processing(self):
+        """Start the background thread for LLaVA processing"""
+        self.batch_processing = True
+        self.batch_thread = threading.Thread(target=self.process_batches, daemon=True)
+        self.batch_thread.start()
+
+    def process_batches(self):
+        """Background thread to process batches with LLaVA"""
+        while self.batch_processing:
+            if not self.batch_queue.empty():
+                frames_batch = self.batch_queue.get()
+                self.process_buffer(frames_batch)
+            else:
+                time.sleep(0.1)  # Prevent CPU thrashing
+
     def process_stream(self) -> None:
         """Process the video stream continuously"""
         self.cap = cv2.VideoCapture(self.rtsp_url)
@@ -243,95 +273,55 @@ class VideoProcessor:
         actual_width = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
         actual_height = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
         logger.info(f"Camera settings - FPS: {actual_fps}, Resolution: {actual_width}x{actual_height}")
-        last_process_time: float = 0
-        frames_buffer: list[np.ndarray] = []
 
-        while(self.cap.isOpened()):
-            ret: bool
-            frame: np.ndarray
-            ret, frame = self.cap.read()
-            annotated_frame, detections = self.process_frame_yolo(frame)
-            scene_analysis = self.analyze_scene(detections, frame)
+        # Start batch processing thread
+        self.start_batch_processing()
+        
+        frames_buffer = []
+        last_batch_time = time.time()
+        batch_interval = 2.0  # Seconds between batches
 
-            # Add scene analysis visualization
-            h, w = frame.shape[:2]
+        try:
+            while(self.cap.isOpened()):
+                ret, frame = self.cap.read()
+                if not ret:
+                    logger.error("Failed to read frame from stream")
+                    break
 
-            # Add risk level
-            if scene_analysis['risk_level'] > 0:
-                risk_color = (0, 0, 255) if scene_analysis['risk_level'] > 5 else (255, 165, 0)
-                cv2.putText(annotated_frame,
-                            f"Risk Level: {scene_analysis['risk_level']}",
-                            (w-200, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.6,
-                            risk_color,
-                            2)
+                # Show real-time YOLO feed
+                annotated_frame, detections = self.process_frame_yolo(frame)
+                cv2.imshow('YOLO Detections', annotated_frame)
 
-            # Add movement patterns
-            y_offset = 60
-            if scene_analysis['patterns']:
-                cv2.putText(annotated_frame,
-                            "Movement Patterns:",
-                            (w-200, y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.6,
-                            (255, 255, 255),
-                            2)
-                y_offset += 25
-                for pattern in scene_analysis['patterns']:
-                    cv2.putText(annotated_frame,
-                                f"{pattern['object']}: {pattern['details']['direction']}",
-                                (w-200, y_offset),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.5,
-                                (255, 255, 255),
-                                1)
-                    y_offset += 20
+                # Collect frames for batch processing
+                current_time = time.time()
+                if current_time - last_batch_time >= batch_interval:
+                    frames_buffer.append(frame)
+                    
+                    if len(frames_buffer) >= self.clip_length:
+                        # Add batch to queue if there's room
+                        try:
+                            self.batch_queue.put(frames_buffer.copy(), block=False)
+                            frames_buffer = []
+                            last_batch_time = current_time
+                        except Full:
+                            logger.warning("Batch queue full, skipping batch")
 
-            # Add alerts
-            if scene_analysis['alerts']:
-                y_offset += 10
-                cv2.putText(annotated_frame,
-                            "Alerts:",
-                            (w-200, y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.6,
-                            (0, 0, 255),
-                            2)
-                y_offset += 25
-                for alert in scene_analysis['alerts']:
-                    cv2.putText(annotated_frame,
-                                f"{alert['object']}: {alert['duration']:.1f}s",
-                                (w-200, y_offset),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.5,
-                                (0, 0, 255),
-                                1)
-                    y_offset += 20
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
 
-            if not ret:
-                logger.error("Failed to read frame from stream")
-                break
-
-            current_time: float = cv2.getTickCount() / cv2.getTickFrequency()
-            # Only process frames at specified interval
-            if (current_time - last_process_time) >= self.frame_interval:
-                frames_buffer.append(annotated_frame)
-                cv2.imshow('frame', annotated_frame)
-                last_process_time = current_time
-
-                if len(frames_buffer) >= self.clip_length:
-                    #self.process_buffer(frames_buffer=frames_buffer)
-                    # Clear the buffer
-                    frames_buffer = []
-
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+        finally:
+            self.batch_processing = False
+            if self.batch_thread:
+                self.batch_thread.join(timeout=1)
+            self.cap.release()
+            cv2.destroyAllWindows()
 
     # Might also need the timestamp of the frames
     def process_buffer(self, frames_buffer: list[np.ndarray]) -> None:
         base64_frames: list[bytes] = []
-        print("Processing buffer...")
+        timestamp = time.strftime("%H:%M:%S")
+        print(f"Processing buffer at {timestamp}...")
+        
         for frame in frames_buffer:
             _, buffer = cv2.imencode('.jpg', frame)
             base64_frame: bytes = base64.b64encode(buffer).decode('utf-8')
@@ -339,20 +329,20 @@ class VideoProcessor:
 
         # Step 1: Analyze the scene
         scene_analysis_result: str = self.llm_client.generate_buffer(
-            prompt=prompts.CLIP_ANALYSIS_PROMPTS["scene_analysis"],
+            prompt=f"[{timestamp}] " + prompts.CLIP_ANALYSIS_PROMPTS["scene_analysis"],
             base64_images=base64_frames
         )
         print("SCENE ANALYSIS RESULT: ", scene_analysis_result)
 
         # Step 2: Analyze the temporal changes
         temporal_analysis_result: str = self.llm_client.generate_buffer(
-            prompt=prompts.CLIP_ANALYSIS_PROMPTS["temporal_analysis"],
+            prompt=f"[{timestamp}] " + prompts.CLIP_ANALYSIS_PROMPTS["temporal_analysis"],
             base64_images=base64_frames
         )
         print("TEMPORAL ANALYSIS RESULT: ", temporal_analysis_result)
 
-        # Step 3: Analyze the semantic meaning of the scene
-        semantic_analysis_prompt: str = prompts.CLIP_ANALYSIS_PROMPTS["semantic_analysis"].format(
+        # Step 3: Analyze the semantic meaning
+        semantic_analysis_prompt: str = f"[{timestamp}] " + prompts.CLIP_ANALYSIS_PROMPTS["semantic_analysis"].format(
             scene_analysis=scene_analysis_result,
             temporal_analysis=temporal_analysis_result
         )
@@ -367,7 +357,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process RTSP video stream')
     parser.add_argument('--rtsp-url', type=str, required=True,
                       help='RTSP URL (e.g., rtsp://username:password@ip_address:port/stream)')
-    args = parser.parse_args()
+    parser.add_argument('--fps', type=float, default=10.0,
+                      help='Frames per second to process (default: 10.0)')
+    parser.add_argument('--yolo-model', type=str, default='yolov8s.pt',
+                      choices=['yolov8n.pt', 'yolov8s.pt', 'yolov8m.pt', 'yolov8l.pt', 'yolov8x.pt'],
+                      help='YOLO model to use (default: yolov8s.pt)')
+    parser.add_argument('--llm-backend', type=str, default='openai',
+                      choices=['openai', 'ollama'],
+                      help='LLM backend to use (default: openai)')
 
-    processor = VideoProcessor(args.rtsp_url)
+    args = parser.parse_args()
+    processor = VideoProcessor(args.rtsp_url, fps=args.fps, 
+                             yolo_model=args.yolo_model,
+                             llm_backend=args.llm_backend)
     processor.process_stream()
