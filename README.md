@@ -16,6 +16,10 @@ uvicorn deepobserver.main:app --reload
 ```bash
 python deepobserver/processor.py --rtsp-url <rtsp-url> --fps <fps> --yolo-model <yolo-model> --llm-backend <llm-backend>
 ```
+example: 
+```bash
+python deepobserver/processor.py --rtsp-url 'rtsp://admin:georgedroyd1@192.168.5.224:554' --llm-backend ollama
+```
 
 ## Using Ollama with LLaVA
 

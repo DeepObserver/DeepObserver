@@ -97,12 +97,20 @@ class OllamaClient(LLMClient):
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "stream": False
+            "stream": False,
+            "options": {
+                "temperature": 0.7,
+                "num_predict": 128,
+            }
         }
         
+        # Format image data correctly for Ollama
         if base64_image:
+            # Remove any data:image prefix if present
+            if 'base64,' in base64_image:
+                base64_image = base64_image.split('base64,')[1]
             payload["images"] = [base64_image]
-            
+
         response = requests.post(url, json=payload)
         response.raise_for_status()
         return response.json()['response']
@@ -121,15 +129,13 @@ class OllamaClient(LLMClient):
 
     def generate_buffer(self, prompt: str, base64_images: list[bytes]) -> str:
         """Process multiple images through Ollama"""
-        combined_prompt = prompt + "\nAnalyze these sequential frames:"
+        # LLaVA can only process one image at a time
+        if not base64_images:
+            return "No images provided"
+            
+        # Use the first frame for analysis
         try:
-            response = self.generate(combined_prompt, base64_images)
-            # Log with frame count info
-            self.log_observation(
-                f"Batch Analysis ({len(base64_images)} frames):\n{response}"
-            )
-            return response
+            return self.generate(prompt, base64_images[0])
         except Exception as e:
-            error_msg = f"Error processing image buffer: {e}"
-            self.log_observation(f"ERROR: {error_msg}")
-            return error_msg
+            print(f"Error processing image buffer: {e}")
+            return f"Error processing image buffer: {e}"
