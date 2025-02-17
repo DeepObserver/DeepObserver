@@ -45,3 +45,12 @@ ENV/
 # Project specific
 videos/
 models/
+
+# YOLO files
+*.pt
+runs/
+*.onnx
+*.engine
+*.tflite
+*.mlmodel
+*.torchscript
