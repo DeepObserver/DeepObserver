@@ -11,6 +11,7 @@ services:
       - POSTGRES_DB=deepobserver
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
 
 volumes:
   postgres_data:
