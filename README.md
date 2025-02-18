@@ -17,8 +17,14 @@ docker-compose up -d
    - API: http://localhost:8000
    - Database: postgresql://postgres:postgres@localhost:5432/vectordb
 
-### Local Development (Alternative)
-1. Install dependencies:
+### Local Development
+1. Create and activate a Python virtual environment:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
