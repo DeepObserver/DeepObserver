@@ -12,7 +12,7 @@ import numpy as np
 from dotenv import load_dotenv
 from ultralytics import YOLO
 
-from prompts import prompts
+from prompts import CLIP_ANALYSIS_PROMPTS
 from llm_client.base import LLMClient, OllamaClient, OpenAIClient
 
 logger = logging.getLogger(__name__)
@@ -330,30 +330,50 @@ class VideoProcessor:
 
     def process_buffer(self, frames_buffer: list[np.ndarray]) -> None:
         base64_frames: list[bytes] = []
+        yolo_detections: list[dict] = []
         timestamp = time.strftime("%H:%M:%S")
         logger.info(f"Processing buffer at {timestamp}...")
 
+        # Process frames with both YOLO and prepare for LLaVA
         for frame in frames_buffer:
+            # Get YOLO detections
+            _, detections = self.process_frame_yolo(frame)
+            yolo_detections.append(detections)
+            
+            # Prepare frame for LLaVA
             _, buffer = cv2.imencode('.jpg', frame)
             base64_frame: bytes = base64.b64encode(buffer).decode('utf-8')
             base64_frames.append(base64_frame)
 
-        # Step 1: Analyze the scene
+        # Summarize YOLO detections
+        yolo_summary = self.summarize_detections(yolo_detections)
+
+        # Step 1: Analyze the scene with YOLO context
+        scene_prompt = f"""[{timestamp}] 
+YOLO Detections: {yolo_summary}
+
+{CLIP_ANALYSIS_PROMPTS['scene_analysis']}"""
+
         scene_analysis_result: str = self.llm_client.generate_buffer(
-            prompt=f"[{timestamp}] " + prompts.CLIP_ANALYSIS_PROMPTS["scene_analysis"],
+            prompt=scene_prompt,
             base64_images=base64_frames
         )
         logger.info(f"Scene Analysis: {scene_analysis_result}")
 
-        # Step 2: Analyze the temporal changes
+        # Step 2: Analyze temporal changes with detection context
+        temporal_prompt = f"""[{timestamp}]
+Previous Detections: {yolo_summary}
+
+{CLIP_ANALYSIS_PROMPTS['temporal_analysis']}"""
+
         temporal_analysis_result: str = self.llm_client.generate_buffer(
-            prompt=f"[{timestamp}] " + prompts.CLIP_ANALYSIS_PROMPTS["temporal_analysis"],
+            prompt=temporal_prompt,
             base64_images=base64_frames
         )
         logger.info(f"Temporal Analysis: {temporal_analysis_result}")
 
         # Step 3: Analyze the semantic meaning
-        semantic_analysis_prompt: str = f"[{timestamp}] " + prompts.CLIP_ANALYSIS_PROMPTS["semantic_analysis"].format(
+        semantic_analysis_prompt: str = f"[{timestamp}] " + CLIP_ANALYSIS_PROMPTS["semantic_analysis"].format(
             scene_analysis=scene_analysis_result,
             temporal_analysis=temporal_analysis_result
         )
@@ -363,6 +383,32 @@ class VideoProcessor:
         )
         logger.info(f"Semantic Analysis: {semantic_analysis_result}")
         # TODO: Save the response to vector database
+
+    def summarize_detections(self, detections_list: list[dict]) -> str:
+        """Create a human-readable summary of YOLO detections"""
+        summary = []
+        
+        # Collect all unique objects and their counts
+        object_counts = {}
+        for frame_detections in detections_list:
+            for det in frame_detections:
+                obj = det['class']
+                conf = det['confidence']
+                if obj not in object_counts:
+                    object_counts[obj] = {'count': 0, 'avg_conf': 0}
+                object_counts[obj]['count'] += 1
+                object_counts[obj]['avg_conf'] += conf
+
+        # Calculate averages and format summary
+        for obj, data in object_counts.items():
+            avg_conf = data['avg_conf'] / data['count']
+            summary.append(f"{obj}: {data['count']} instances (avg conf: {avg_conf:.2f})")
+
+        return "\n".join([
+            "YOLO detected the following objects:",
+            *summary,
+            "\nPlease consider these detections in your analysis."
+        ])
 
     def update_scene_history(self, new_analysis: dict) -> None:
         """Learn from new observations"""

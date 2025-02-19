@@ -1,6 +1,7 @@
 # Logs
 logs/
 *.log
+logs/ollama_observations_*.txt
 
 # Python
 __pycache__/
