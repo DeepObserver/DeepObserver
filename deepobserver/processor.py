@@ -12,8 +12,8 @@ import numpy as np
 from dotenv import load_dotenv
 from ultralytics import YOLO
 
-from prompts import prompts
-from llm_client.base import LLMClient, OpenAIClient, OllamaClient
+from deepobserver.prompts import prompts
+from deepobserver.llm_client.base import LLMClient, OllamaClient, OpenAIClient
 
 logger = logging.getLogger(__name__)
 load_dotenv()

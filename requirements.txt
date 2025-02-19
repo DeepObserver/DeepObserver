@@ -1,5 +1,5 @@
 fastapi==0.115.8
-numpy==2.2.2
+numpy>=1.26.0
 openai==1.62.0
 opencv-python==4.11.0.86
 python-dotenv==1.0.1
