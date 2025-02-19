@@ -12,14 +12,14 @@ import numpy as np
 from dotenv import load_dotenv
 from ultralytics import YOLO
 
-from deepobserver.prompts import prompts
-from deepobserver.llm_client.base import LLMClient, OllamaClient, OpenAIClient
+from prompts import prompts
+from llm_client.base import LLMClient, OllamaClient, OpenAIClient
 
 logger = logging.getLogger(__name__)
 load_dotenv()
 
 class VideoProcessor:
-    def __init__(self, rtsp_url: str, fps: float = 60.0, yolo_model: str = 'yolov8s.pt', 
+    def __init__(self, rtsp_url: str, fps: float = 60.0, yolo_model: str = 'yolov8s.pt',
                  llm_backend: str = 'openai') -> None:
         self.rtsp_url: str = rtsp_url
         self.cap: Optional[cv2.VideoCapture] = None
@@ -276,7 +276,7 @@ class VideoProcessor:
 
         # Start batch processing thread
         self.start_batch_processing()
-        
+
         frames_buffer = []
         last_batch_time = time.time()
         batch_interval = 2.0  # Seconds between batches
@@ -296,7 +296,7 @@ class VideoProcessor:
                 current_time = time.time()
                 if current_time - last_batch_time >= batch_interval:
                     frames_buffer.append(frame)
-                    
+
                     if len(frames_buffer) >= self.clip_length:
                         # Add batch to queue if there's room
                         try:
@@ -321,7 +321,7 @@ class VideoProcessor:
         base64_frames: list[bytes] = []
         timestamp = time.strftime("%H:%M:%S")
         print(f"Processing buffer at {timestamp}...")
-        
+
         for frame in frames_buffer:
             _, buffer = cv2.imencode('.jpg', frame)
             base64_frame: bytes = base64.b64encode(buffer).decode('utf-8')
@@ -367,7 +367,7 @@ if __name__ == "__main__":
                       help='LLM backend to use (default: openai)')
 
     args = parser.parse_args()
-    processor = VideoProcessor(args.rtsp_url, fps=args.fps, 
+    processor = VideoProcessor(args.rtsp_url, fps=args.fps,
                              yolo_model=args.yolo_model,
                              llm_backend=args.llm_backend)
     processor.process_stream()
