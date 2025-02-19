@@ -281,6 +281,10 @@ class VideoProcessor:
         # Create window in main thread
         cv2.namedWindow('YOLO Detections', cv2.WINDOW_NORMAL)
 
+        # Start LLaVA processing thread
+        llava_thread = threading.Thread(target=self.llava_processing_loop, daemon=True)
+        llava_thread.start()
+
         frames_buffer = []
         last_analysis_time = time.time()
 
@@ -318,14 +322,16 @@ class VideoProcessor:
         while self.running:
             if not self.llava_queue.empty():
                 frames = self.llava_queue.get()
-                self.process_buffer(frames)
+                try:
+                    self.process_buffer(frames)
+                except Exception as e:
+                    logger.error(f"Error in LLaVA processing: {e}")
             time.sleep(0.1)  # Prevent CPU thrashing
 
-    # Might also need the timestamp of the frames
     def process_buffer(self, frames_buffer: list[np.ndarray]) -> None:
         base64_frames: list[bytes] = []
         timestamp = time.strftime("%H:%M:%S")
-        print(f"Processing buffer at {timestamp}...")
+        logger.info(f"Processing buffer at {timestamp}...")
 
         for frame in frames_buffer:
             _, buffer = cv2.imencode('.jpg', frame)
@@ -337,14 +343,14 @@ class VideoProcessor:
             prompt=f"[{timestamp}] " + prompts.CLIP_ANALYSIS_PROMPTS["scene_analysis"],
             base64_images=base64_frames
         )
-        print("SCENE ANALYSIS RESULT: ", scene_analysis_result)
+        logger.info(f"Scene Analysis: {scene_analysis_result}")
 
         # Step 2: Analyze the temporal changes
         temporal_analysis_result: str = self.llm_client.generate_buffer(
             prompt=f"[{timestamp}] " + prompts.CLIP_ANALYSIS_PROMPTS["temporal_analysis"],
             base64_images=base64_frames
         )
-        print("TEMPORAL ANALYSIS RESULT: ", temporal_analysis_result)
+        logger.info(f"Temporal Analysis: {temporal_analysis_result}")
 
         # Step 3: Analyze the semantic meaning
         semantic_analysis_prompt: str = f"[{timestamp}] " + prompts.CLIP_ANALYSIS_PROMPTS["semantic_analysis"].format(
@@ -355,7 +361,7 @@ class VideoProcessor:
         semantic_analysis_result: str = self.llm_client.generate(
             prompt=semantic_analysis_prompt
         )
-        print("SEMANTIC ANALYSIS RESULT: ", semantic_analysis_result)
+        logger.info(f"Semantic Analysis: {semantic_analysis_result}")
         # TODO: Save the response to vector database
 
     def update_scene_history(self, new_analysis: dict) -> None:
