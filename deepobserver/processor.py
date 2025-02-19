@@ -46,47 +46,44 @@ class VideoProcessor:
         self.fps_counter = 0
         self.current_fps = 0
         self.frame_queue = Queue(maxsize=2)
-        self.running = False
+        self.running = True
 
-        # Add object categories and their handling rules
+        # Expand categories beyond security focus
         self.object_categories = {
-            'security_concern': {
-                'objects': [
-                    'knife',
-                    'scissors',
-                    'bottle',  # Could be a weapon or contain harmful substances
-                    'fire extinguisher',  # Important for safety monitoring
-                    'cell phone',  # Could indicate unauthorized recording
-                    'suitcase',  # Unattended baggage
-                    'backpack'   # Unattended baggage
-                ],
-                'alert_level': 'high',
-                'min_confidence': 0.6,
-                'color': (0, 0, 255),  # Red
-                'requires_immediate_alert': True,
-                'track_duration': True,  # Track how long object is present
-            },
-            'valuables': {
-                'objects': ['laptop', 'cell phone', 'backpack'],
-                'alert_level': 'medium',
-                'min_confidence': 0.5,
-                'color': (255, 165, 0),  # Orange
-            },
-            'people': {
+            'human_activity': {
                 'objects': ['person'],
-                'alert_level': 'low',
-                'min_confidence': 0.4,
-                'color': (0, 255, 0),  # Green
                 'track_interactions': True,
+                'track_gestures': True,
+                'track_groups': True,
+                'analyze_behavior': True
+            },
+            'objects_of_interest': {
+                'objects': [
+                    'laptop', 'phone', 'book', 'chair', 'table',
+                    'cup', 'bottle', 'bag', 'clothing'
+                ],
+                'track_usage': True,
+                'track_placement': True
+            },
+            'environment': {
+                'track_lighting': True,
+                'track_occupancy': True,
+                'track_space_usage': True
+            },
+            'interactions': {
+                'human_object': True,
+                'human_human': True,
+                'object_object': True
             }
         }
 
-        # Add scene analysis
-        self.scene_history = {
-            'objects': [],  # List of objects over time
-            'last_positions': {},  # Track object positions
-            'duration_tracking': {},  # Track how long objects present
-            'scene_context': None,  # Last scene context
+        # Add contextual understanding
+        self.scene_context = {
+            'time_of_day': None,
+            'activity_level': 0,
+            'space_type': None,  # office, home, public, etc.
+            'recurring_patterns': {},
+            'normal_state': None
         }
 
         # Initialize LLM client based on backend choice // added backend ollama to blend with LLaVA
@@ -101,6 +98,11 @@ class VideoProcessor:
         self.batch_queue = Queue(maxsize=5)  # Store frame batches for LLaVA
         self.batch_processing = False
         self.batch_thread = None
+
+        # Separate queues for YOLO and LLaVA
+        self.yolo_queue = Queue(maxsize=2)  # Real-time YOLO processing
+        self.llava_queue = Queue(maxsize=30)  # Deeper scene analysis
+        self.analysis_interval = 5.0  # Seconds between deep analyses
 
     def analyze_movement_pattern(self, positions: List[Tuple]) -> dict:
         """Analyze movement pattern from position history"""
@@ -120,10 +122,32 @@ class VideoProcessor:
 
     def get_object_category(self, object_name: str) -> Tuple[str, dict]:
         """Get category and rules for an object"""
-        for category, rules in self.object_categories.items():
-            if object_name in rules['objects']:
-                return category, rules
-        return 'default', None
+        # Map common YOLO classes to our categories
+        object_category_map = {
+            'person': 'human_activity',
+            'laptop': 'objects_of_interest',
+            'phone': 'objects_of_interest',
+            'book': 'objects_of_interest',
+            'chair': 'objects_of_interest',
+            'table': 'objects_of_interest',
+            'cup': 'objects_of_interest',
+            'bottle': 'objects_of_interest',
+            'bag': 'objects_of_interest',
+            'backpack': 'objects_of_interest',
+            'handbag': 'objects_of_interest',
+            'suitcase': 'objects_of_interest',
+            'cell phone': 'objects_of_interest',
+            'couch': 'objects_of_interest',
+            'tv': 'objects_of_interest'
+        }
+        
+        # Get category from map, default to 'environment' if not found
+        category = object_category_map.get(object_name, 'environment')
+        
+        # Get the rules for this category
+        rules = self.object_categories.get(category, {})
+        
+        return category, rules
 
     def process_frame_yolo(self, frame: np.ndarray) -> Tuple[np.ndarray, List[dict]]:
         results = self.yolo.predict(frame, conf=self.detection_threshold)[0]
@@ -139,28 +163,29 @@ class VideoProcessor:
             # Get category and rules for this object
             category, rules = self.get_object_category(class_name)
 
-            # Check if we should track this object
-            if rules and conf >= rules['min_confidence']:
+            # Add detection if confidence meets threshold
+            if conf >= self.detection_threshold:
                 detections.append({
                     'class': class_name,
                     'category': category,
                     'confidence': conf,
-                    'box': (int(x1), int(y1), int(x2), int(y2)),
-                    'alert_level': rules['alert_level']
+                    'box': (int(x1), int(y1), int(x2), int(y2))
                 })
 
-                # Draw box with category-specific color
-                color = rules['color'] if rules else (128, 128, 128)
+                # Draw box with category color
+                color = (0, 255, 0)  # Default green
+                if category == 'human_activity':
+                    color = (255, 0, 0)  # Blue
+                elif category == 'objects_of_interest':
+                    color = (0, 165, 255)  # Orange
+
                 cv2.rectangle(annotated_frame,
                             (int(x1), int(y1)),
                             (int(x2), int(y2)),
                             color, 2)
 
-                # Add alert level indicator for high-priority objects
+                # Add label
                 label = f'{class_name} {conf:.2f}'
-                if rules['alert_level'] == 'high':
-                    label = '⚠️ ' + label
-
                 cv2.putText(
                     annotated_frame,
                     label,
@@ -181,67 +206,46 @@ class VideoProcessor:
                           (10, summary_y),
                           cv2.FONT_HERSHEY_SIMPLEX,
                           0.6,
-                          self.object_categories[category]['color'],
+                          (255, 255, 255),  # White text for summary
                           2)
                 summary_y += 25
 
         return annotated_frame, detections
 
     def analyze_scene(self, detections: List[dict], frame: np.ndarray) -> dict:
-        """Analyze scene context and temporal patterns"""
-        current_time = time.time()
+        """Enhanced scene analysis"""
         scene_analysis = {
-            'context': {},
-            'alerts': [],
-            'patterns': [],
-            'risk_level': 0
+            'spatial_analysis': self.analyze_spatial_relationships(detections),
+            'activity_analysis': self.analyze_activities(detections),
+            'context_analysis': self.analyze_context(frame),
+            'interaction_analysis': self.analyze_interactions(detections),
+            'environmental_analysis': self.analyze_environment(frame)
         }
-
-        # Update object tracking
-        current_objects = set()
-        for det in detections:
-            obj_id = f"{det['class']}_{det['box'][0]}_{det['box'][1]}"
-            current_objects.add(obj_id)
-
-            # Track duration
-            if obj_id not in self.scene_history['duration_tracking']:
-                self.scene_history['duration_tracking'][obj_id] = current_time
-
-            # Track position
-            if obj_id not in self.scene_history['last_positions']:
-                self.scene_history['last_positions'][obj_id] = []
-            self.scene_history['last_positions'][obj_id].append(det['box'])
-
-            # Analyze based on category
-            if det['alert_level'] == 'high':
-                duration = current_time - self.scene_history['duration_tracking'][obj_id]
-                scene_analysis['alerts'].append({
-                    'type': 'security_concern',
-                    'object': det['class'],
-                    'duration': duration,
-                    'location': det['box']
-                })
-                scene_analysis['risk_level'] += 2
-
-        # Clean up old tracking data
-        for obj_id in list(self.scene_history['duration_tracking'].keys()):
-            if obj_id not in current_objects:
-                del self.scene_history['duration_tracking'][obj_id]
-                if obj_id in self.scene_history['last_positions']:
-                    del self.scene_history['last_positions'][obj_id]
-
-        # Analyze movement patterns
-        for obj_id, positions in self.scene_history['last_positions'].items():
-            if len(positions) > 5:  # Need enough positions to analyze
-                movement = self.analyze_movement_pattern(positions[-5:])
-                if movement['speed'] > 50:  # Pixels per frame
-                    scene_analysis['patterns'].append({
-                        'object': obj_id,
-                        'type': 'rapid_movement',
-                        'details': movement
-                    })
-
+        
+        # Update scene history with new insights
+        self.update_scene_history(scene_analysis)
+        
         return scene_analysis
+
+    def analyze_spatial_relationships(self, detections: List[dict]) -> dict:
+        """Analyze how objects are positioned relative to each other"""
+        relationships = {}
+        for det1 in detections:
+            for det2 in detections:
+                if det1 != det2:
+                    rel = self.calculate_spatial_relationship(det1['box'], det2['box'])
+                    relationships[f"{det1['class']}_{det2['class']}"] = rel
+        return relationships
+
+    def analyze_activities(self, detections: List[dict]) -> dict:
+        """Analyze ongoing activities in the scene"""
+        activities = {
+            'individual_actions': [],
+            'group_activities': [],
+            'object_interactions': []
+        }
+        # Implementation here
+        return activities
 
     def start_batch_processing(self):
         """Start the background thread for LLaVA processing"""
@@ -274,47 +278,48 @@ class VideoProcessor:
         actual_height = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
         logger.info(f"Camera settings - FPS: {actual_fps}, Resolution: {actual_width}x{actual_height}")
 
-        # Start batch processing thread
-        self.start_batch_processing()
+        # Create window in main thread
+        cv2.namedWindow('YOLO Detections', cv2.WINDOW_NORMAL)
 
         frames_buffer = []
-        last_batch_time = time.time()
-        batch_interval = 2.0  # Seconds between batches
+        last_analysis_time = time.time()
 
         try:
-            while(self.cap.isOpened()):
+            while(self.cap.isOpened() and self.running):
                 ret, frame = self.cap.read()
                 if not ret:
-                    logger.error("Failed to read frame from stream")
                     break
 
-                # Show real-time YOLO feed
+                # Process YOLO in main thread
                 annotated_frame, detections = self.process_frame_yolo(frame)
                 cv2.imshow('YOLO Detections', annotated_frame)
 
-                # Collect frames for batch processing
+                # Collect frames for LLaVA analysis
                 current_time = time.time()
-                if current_time - last_batch_time >= batch_interval:
-                    frames_buffer.append(frame)
-
+                if current_time - last_analysis_time >= self.analysis_interval:
+                    frames_buffer.append(frame.copy())
+                    
                     if len(frames_buffer) >= self.clip_length:
-                        # Add batch to queue if there's room
                         try:
-                            self.batch_queue.put(frames_buffer.copy(), block=False)
+                            self.llava_queue.put(frames_buffer.copy(), block=False)
                             frames_buffer = []
-                            last_batch_time = current_time
+                            last_analysis_time = current_time
                         except Full:
-                            logger.warning("Batch queue full, skipping batch")
+                            logger.warning("LLaVA queue full, skipping analysis")
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
 
         finally:
-            self.batch_processing = False
-            if self.batch_thread:
-                self.batch_thread.join(timeout=1)
-            self.cap.release()
-            cv2.destroyAllWindows()
+            self.cleanup()
+
+    def llava_processing_loop(self):
+        """Deep scene analysis loop"""
+        while self.running:
+            if not self.llava_queue.empty():
+                frames = self.llava_queue.get()
+                self.process_buffer(frames)
+            time.sleep(0.1)  # Prevent CPU thrashing
 
     # Might also need the timestamp of the frames
     def process_buffer(self, frames_buffer: list[np.ndarray]) -> None:
@@ -352,6 +357,32 @@ class VideoProcessor:
         )
         print("SEMANTIC ANALYSIS RESULT: ", semantic_analysis_result)
         # TODO: Save the response to vector database
+
+    def update_scene_history(self, new_analysis: dict) -> None:
+        """Learn from new observations"""
+        # Update normal state model
+        if self.scene_context['normal_state'] is None:
+            self.scene_context['normal_state'] = new_analysis
+        else:
+            self.scene_context['normal_state'] = self.merge_states(
+                self.scene_context['normal_state'],
+                new_analysis,
+                learning_rate=0.1
+            )
+
+        # Update recurring patterns
+        self.update_patterns(new_analysis)
+
+        # Adjust sensitivity thresholds based on context
+        self.adjust_thresholds()
+
+    def cleanup(self):
+        """Cleanup resources"""
+        self.running = False
+        time.sleep(0.5)  # Give threads time to finish
+        if self.cap is not None:
+            self.cap.release()
+        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process RTSP video stream')

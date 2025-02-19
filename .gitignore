@@ -1,3 +1,7 @@
+# Logs
+logs/
+*.log
+
 # Python
 __pycache__/
 *.py[cod]
@@ -21,22 +25,21 @@ wheels/
 *.egg
 
 # Virtual Environment
-.venv/
-venv/
-env/
-ENV/
 .env
+.venv
+env/
+venv/
+ENV/
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-.DS_Store
 
-# Logs
-logs/
-*.log
+# OS
+.DS_Store
+Thumbs.db
 
 # Local development
 .env.local

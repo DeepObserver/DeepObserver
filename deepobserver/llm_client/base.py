@@ -100,7 +100,10 @@ class OllamaClient(LLMClient):
             "stream": False,
             "options": {
                 "temperature": 0.7,
-                "num_predict": 128,
+                "num_predict": 1024,
+                "top_k": 50,
+                "top_p": 0.95,
+                "repeat_penalty": 1.1
             }
         }
         
