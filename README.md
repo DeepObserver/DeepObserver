@@ -67,3 +67,23 @@ docker-compose down -v
 # Check running containers
 docker ps
 ```
+
+
+### Current Structure
+
+deepobserver/
+├── core/
+│   ├── __init__.py
+│   ├── processor.py         # Main VideoProcessor class (core functionality)
+│   ├── detection.py        # YOLO detection and object tracking
+│   ├── analysis.py         # Scene analysis and context understanding
+│   └── utils.py           # Helper functions and utilities
+├── ui/
+│   ├── __init__.py
+│   ├── query_window.py    # Query interface and window management
+│   └── display.py         # Video display and visualization
+├── logging/
+│   ├── __init__.py
+│   ├── qa_logger.py       # Q&A logging functionality
+│   └── scene_logger.py    # Scene analysis logging
+└── prompts/               # (existing prompts directory)

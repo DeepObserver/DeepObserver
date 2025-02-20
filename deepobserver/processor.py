@@ -524,7 +524,7 @@ Focus specifically on answering the user's question using the visual information
                             logger.warning("LLaVA queue full, skipping analysis")
                             frames_buffer = []  # Clear buffer if queue is full
                 
-                # Show frames
+                # Show frames - need to check if this actually works lol
                 cv2.imshow('YOLO Detections', annotated_frame)
                 self.update_query_window()
 

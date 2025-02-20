@@ -103,7 +103,7 @@ class OllamaClient(LLMClient):
         payload = {
             "model": self.model_name,
             "prompt": prompt,
-            "stream": False,
+            "stream": False, # 
             "options": {
                 "temperature": 0.7,
                 "num_predict": 1024,
@@ -128,7 +128,7 @@ class OllamaClient(LLMClient):
         """Generate response using Ollama API"""
         try:
             response = self._make_api_call(prompt, base64_image)
-            # Only log if not disabled
+            # Only log if not disabled - low key sus way to do this but it ensures only one log is created for QA & log 
             if not self.disable_logging:
                 self.log_observation(response)
             return response
@@ -140,7 +140,7 @@ class OllamaClient(LLMClient):
 
     def generate_buffer(self, prompt: str, base64_images: list[bytes]) -> str:
         """Process multiple images through Ollama"""
-        # LLaVA can only process one image at a time
+        # LLaVA can only process one image at a time need to make a new client for each image? 
         if not base64_images:
             return "No images provided"
             
