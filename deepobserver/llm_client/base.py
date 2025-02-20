@@ -66,22 +66,28 @@ class OpenAIClient(LLMClient):
 
 # Add new Ollama client
 class OllamaClient(LLMClient):
-    def __init__(self, model_name: str = "llava"):
-        self.model = model_name
+    def __init__(self, model_name: str = "llava", disable_logging: bool = False):
+        self.model_name = model_name
+        self.disable_logging = disable_logging
         self.base_url = "http://localhost:11434/api"
-        self.session_start = time.strftime("%Y%m%d_%H%M%S")
-        # Create logs directory if it doesn't exist
-        os.makedirs('logs', exist_ok=True)
-        self.log_file = f"logs/ollama_observations_{self.session_start}.txt"
         
-        # Create log file with header
-        with open(self.log_file, 'w') as f:
-            f.write(f"Ollama {model_name} Observations\n")
-            f.write(f"Session started: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write("-" * 50 + "\n\n")
+        if not disable_logging:
+            self.session_start = time.strftime("%Y%m%d_%H%M%S")
+            # Create logs directory if it doesn't exist
+            os.makedirs('logs', exist_ok=True)
+            self.log_file = f"logs/ollama_observations_{self.session_start}.txt"
+            
+            # Create log file with header
+            with open(self.log_file, 'w') as f:
+                f.write(f"Ollama {model_name} Observations\n")
+                f.write(f"Session started: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("-" * 50 + "\n\n")
 
     def log_observation(self, observation: str, timestamp: str = None):
         """Log an observation to the session file"""
+        if self.disable_logging:
+            return
+            
         if timestamp is None:
             timestamp = time.strftime("%H:%M:%S")
             
@@ -95,7 +101,7 @@ class OllamaClient(LLMClient):
         url = f"{self.base_url}/generate"
         
         payload = {
-            "model": self.model,
+            "model": self.model_name,
             "prompt": prompt,
             "stream": False,
             "options": {
@@ -122,12 +128,14 @@ class OllamaClient(LLMClient):
         """Generate response using Ollama API"""
         try:
             response = self._make_api_call(prompt, base64_image)
-            # Log the observation
-            self.log_observation(response)
+            # Only log if not disabled
+            if not self.disable_logging:
+                self.log_observation(response)
             return response
         except requests.exceptions.RequestException as e:
             error_msg = f"Ollama API error: {e}"
-            self.log_observation(f"ERROR: {error_msg}")
+            if not self.disable_logging:
+                self.log_observation(f"ERROR: {error_msg}")
             return error_msg
 
     def generate_buffer(self, prompt: str, base64_images: list[bytes]) -> str:

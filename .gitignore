@@ -2,6 +2,10 @@
 logs/
 *.log
 logs/ollama_observations_*.txt
+logs/qa/
+logs/qa/*.txt
+!logs/.gitkeep
+!logs/qa/.gitkeep
 
 # Python
 __pycache__/
