@@ -71,6 +71,7 @@ docker ps
 
 ### Current Structure
 
+```
 deepobserver/
 ├── core/
 │   ├── __init__.py
@@ -87,3 +88,4 @@ deepobserver/
 │   ├── qa_logger.py       # Q&A logging functionality
 │   └── scene_logger.py    # Scene analysis logging
 └── prompts/               # (existing prompts directory)
+```
